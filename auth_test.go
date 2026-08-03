@@ -62,3 +62,42 @@ func TestParseUserJWT(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestMintUserJWTAndLocalIssuer(t *testing.T) {
+	secret := []byte("user-secret-at-least-thirty-two-bytes")
+	tok, err := MintUserJWT(secret, "bob", "editor", "ora-api", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := ParseUserJWT(tok, secret)
+	if err != nil || got.Username != "bob" || got.Role != "editor" || got.Issuer != "ora-api" {
+		t.Fatalf("got=%+v err=%v", got, err)
+	}
+
+	li := NewLocalIssuer(secret, "osa-api", "admin", "admin")
+	tok2, _, claims, err := li.Login("admin", "admin")
+	if err != nil || claims.Username != "admin" {
+		t.Fatalf("login: %+v err=%v", claims, err)
+	}
+	if _, err := li.Parse(tok2); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := li.Login("admin", "wrong"); err != ErrInvalidToken {
+		t.Fatalf("want invalid, got %v", err)
+	}
+}
+
+func TestResolveMode(t *testing.T) {
+	if ResolveMode("standalone", "http://hub") != ModeStandalone {
+		t.Fatal("AUTH_MODE wins")
+	}
+	if ResolveMode("codeployed", "") != ModeCodeployed {
+		t.Fatal("explicit codeployed")
+	}
+	if ResolveMode("", "") != ModeStandalone {
+		t.Fatal("empty peer → standalone")
+	}
+	if ResolveMode("", "http://hub:8080") != ModeCodeployed {
+		t.Fatal("peer set → codeployed")
+	}
+}
