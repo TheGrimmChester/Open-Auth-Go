@@ -1,5 +1,5 @@
 # Changelog
 
-## 0.1.0
+## Unreleased
 
-- Initial module skeleton.
+- Implement user JWT validate and service JWT mint/validate (`iss`/`aud`/`scope`).
