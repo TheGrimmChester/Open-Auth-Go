@@ -48,6 +48,10 @@ func (c MiddlewareConfig) RequireUser(requiredRole string, next http.HandlerFunc
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
+		if err := EnforceProjectACL(r, claims); err != nil {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
 		next(w, r)
 	}
 }
@@ -55,7 +59,8 @@ func (c MiddlewareConfig) RequireUser(requiredRole string, next http.HandlerFunc
 // ApplyUserTenantHeaders enforces JWT-bound org/project against request headers.
 // When claims bind a dimension, a mismatched client header is rejected; matching
 // or missing headers are overwritten from the claims so handlers never trust a
-// wider client scope than the token allows.
+// wider client scope than the token allows. Project allowlists (project_ids) are
+// enforced separately via EnforceProjectACL.
 func ApplyUserTenantHeaders(r *http.Request, claims *UserClaims) error {
 	if r == nil || claims == nil {
 		return nil
@@ -118,6 +123,10 @@ func (c MiddlewareConfig) RequireUserOrService(requiredRole, requiredServiceScop
 		r.Header.Set("X-User-Username", claims.Username)
 		r.Header.Set("X-User-Role", claims.Role)
 		if err := ApplyUserTenantHeaders(r, claims); err != nil {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		if err := EnforceProjectACL(r, claims); err != nil {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
