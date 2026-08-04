@@ -44,6 +44,18 @@ if openauth.IsStandalone(mode) {
 }
 ```
 
+## Per-user project ACLs
+
+Within an org, non-admin users may be limited to a project allowlist minted as `project_ids` (optional `org_id` bind):
+
+```go
+tok, err := openauth.MintUserJWTWithACL(secret, "dev", "viewer", "opa-hub", "acme", []string{"alpha", "beta"}, 0)
+ok := openauth.CanAccessProject(claims, "acme", "alpha") // true
+err = openauth.EnforceProjectACL(r, claims)               // 403-equivalent when header project not allowlisted
+```
+
+`LocalIssuer.RegisterWithMembership` / `SetMembership` store the allowlist; login mints it into the JWT. Role **admin** always bypasses (lab seed `admin`/`admin` keeps full default-org access). Products should call `EnforceProjectACL` after `ApplyUserTenantHeaders` on auth-enforced routes (hub does this on tenancy + query middleware).
+
 ## Service JWT (peer calls)
 
 ```go

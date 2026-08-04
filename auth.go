@@ -31,11 +31,14 @@ type ServiceClaims struct {
 // UserClaims are user-facing JWT claims (validated against JWT_SECRET).
 // OrgID / ProjectID optionally bind the token to a tenant; empty means the
 // caller may still pass X-Organization-ID / X-Project-ID (lab / unbound admin).
+// ProjectIDs is an allowlist of projects within OrgID (or the request org when
+// OrgID is empty). Role admin ignores ProjectIDs and may access every project.
 type UserClaims struct {
-	Username  string `json:"username"`
-	Role      string `json:"role"`
-	OrgID     string `json:"org_id,omitempty"`
-	ProjectID string `json:"project_id,omitempty"`
+	Username   string   `json:"username"`
+	Role       string   `json:"role"`
+	OrgID      string   `json:"org_id,omitempty"`
+	ProjectID  string   `json:"project_id,omitempty"`
+	ProjectIDs []string `json:"project_ids,omitempty"`
 	jwt.RegisteredClaims
 }
 
