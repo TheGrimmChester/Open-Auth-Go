@@ -1,6 +1,6 @@
 # Open-Auth-Go
 
-Shared Open-* Go module for user JWT validation and service JWT mint/validate middleware.
+Shared Open-* Go module for user JWT mint/validate, HTTP middleware, standalone auth handlers, and service JWT mint/validate.
 
 ## Documentation
 
