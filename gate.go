@@ -62,6 +62,9 @@ func Bootstrap(cfg BootstrapConfig) (*Gate, error) {
 		ServiceSecret:   []byte(strings.TrimSpace(cfg.ServiceSecret)),
 		ServiceAudience: strings.TrimSpace(cfg.ServiceAudience),
 	}
+	if ephemeral {
+		log.Printf("auth: JWT_SECRET unset/weak — using ephemeral secret (tokens reset on restart)")
+	}
 	if IsStandalone(mode) {
 		g.Local = NewLocalIssuer(secret, cfg.IssuerID, cfg.SeedUsername, cfg.SeedPassword)
 		g.Secret = g.Local.Secret
