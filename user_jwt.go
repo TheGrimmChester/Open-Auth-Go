@@ -12,9 +12,18 @@ const defaultUserTTL = 24 * time.Hour
 // MintUserJWT issues a user-facing HS256 JWT with JWT_SECRET.
 // issuer should be the product service id (e.g. "ora-api", "opa-hub").
 func MintUserJWT(secret []byte, username, role, issuer string, ttl time.Duration) (string, error) {
+	return MintUserJWTWithTenant(secret, username, role, issuer, "", "", ttl)
+}
+
+// MintUserJWTWithTenant issues a user JWT optionally bound to org_id / project_id.
+// When orgID or projectID is non-empty, product middleware should enforce that
+// request tenant headers match (or overwrite them from the claims).
+func MintUserJWTWithTenant(secret []byte, username, role, issuer, orgID, projectID string, ttl time.Duration) (string, error) {
 	username = strings.TrimSpace(username)
 	role = strings.TrimSpace(role)
 	issuer = strings.TrimSpace(issuer)
+	orgID = strings.TrimSpace(orgID)
+	projectID = strings.TrimSpace(projectID)
 	if len(secret) == 0 || username == "" {
 		return "", ErrInvalidToken
 	}
@@ -26,8 +35,10 @@ func MintUserJWT(secret []byte, username, role, issuer string, ttl time.Duration
 		role = "viewer"
 	}
 	claims := UserClaims{
-		Username: username,
-		Role:     role,
+		Username:  username,
+		Role:      role,
+		OrgID:     orgID,
+		ProjectID: projectID,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer:    issuer,
 			Subject:   username,

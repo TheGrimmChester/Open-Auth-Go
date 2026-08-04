@@ -48,6 +48,23 @@ func TestBearerOrCookie(t *testing.T) {
 	}
 }
 
+func TestApplyUserTenantHeaders(t *testing.T) {
+	claims := &UserClaims{Username: "a", Role: "viewer", OrgID: "acme", ProjectID: "prod"}
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r.Header.Set("X-Organization-ID", "other")
+	if err := ApplyUserTenantHeaders(r, claims); err != ErrTenantMismatch {
+		t.Fatalf("want mismatch, got %v", err)
+	}
+	r2 := httptest.NewRequest(http.MethodGet, "/", nil)
+	r2.Header.Set("X-Organization-ID", "all")
+	if err := ApplyUserTenantHeaders(r2, claims); err != nil {
+		t.Fatal(err)
+	}
+	if r2.Header.Get("X-Organization-ID") != "acme" || r2.Header.Get("X-Project-ID") != "prod" {
+		t.Fatalf("headers=%v", r2.Header)
+	}
+}
+
 func TestRequireUserMiddleware(t *testing.T) {
 	secret := []byte(strings.Repeat("b", 32))
 	tok, err := MintUserJWT(secret, "alice", "editor", "ora-api", 0)
