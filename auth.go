@@ -15,6 +15,10 @@ var ErrInvalidToken = errors.New("invalid token")
 // ErrMissingScope is returned when a service JWT lacks a required scope.
 var ErrMissingScope = errors.New("missing scope")
 
+// ErrTenantMismatch is returned when request org/project headers conflict with
+// JWT-bound tenant claims.
+var ErrTenantMismatch = errors.New("tenant mismatch")
+
 const defaultServiceTTL = 5 * time.Minute
 
 // ServiceClaims are peer service-to-service JWT claims.
@@ -25,9 +29,13 @@ type ServiceClaims struct {
 }
 
 // UserClaims are user-facing JWT claims (validated against JWT_SECRET).
+// OrgID / ProjectID optionally bind the token to a tenant; empty means the
+// caller may still pass X-Organization-ID / X-Project-ID (lab / unbound admin).
 type UserClaims struct {
-	Username string `json:"username"`
-	Role     string `json:"role"`
+	Username  string `json:"username"`
+	Role      string `json:"role"`
+	OrgID     string `json:"org_id,omitempty"`
+	ProjectID string `json:"project_id,omitempty"`
 	jwt.RegisteredClaims
 }
 
