@@ -74,6 +74,15 @@ func TestMintUserJWTAndLocalIssuer(t *testing.T) {
 		t.Fatalf("got=%+v err=%v", got, err)
 	}
 
+	tokT, err := MintUserJWTWithTenant(secret, "carol", "viewer", "opa-hub", "acme", "prod", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotT, err := ParseUserJWT(tokT, secret)
+	if err != nil || gotT.OrgID != "acme" || gotT.ProjectID != "prod" {
+		t.Fatalf("tenant claims: %+v err=%v", gotT, err)
+	}
+
 	li := NewLocalIssuer(secret, "osa-api", "admin", "admin")
 	tok2, _, claims, err := li.Login("admin", "admin")
 	if err != nil || claims.Username != "admin" {

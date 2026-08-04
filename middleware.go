@@ -44,8 +44,37 @@ func (c MiddlewareConfig) RequireUser(requiredRole string, next http.HandlerFunc
 		}
 		r.Header.Set("X-User-Username", claims.Username)
 		r.Header.Set("X-User-Role", claims.Role)
+		if err := ApplyUserTenantHeaders(r, claims); err != nil {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
 		next(w, r)
 	}
+}
+
+// ApplyUserTenantHeaders enforces JWT-bound org/project against request headers.
+// When claims bind a dimension, a mismatched client header is rejected; matching
+// or missing headers are overwritten from the claims so handlers never trust a
+// wider client scope than the token allows.
+func ApplyUserTenantHeaders(r *http.Request, claims *UserClaims) error {
+	if r == nil || claims == nil {
+		return nil
+	}
+	if org := strings.TrimSpace(claims.OrgID); org != "" {
+		reqOrg := strings.TrimSpace(r.Header.Get("X-Organization-ID"))
+		if reqOrg != "" && !strings.EqualFold(reqOrg, "all") && reqOrg != org {
+			return ErrTenantMismatch
+		}
+		r.Header.Set("X-Organization-ID", org)
+	}
+	if proj := strings.TrimSpace(claims.ProjectID); proj != "" {
+		reqProj := strings.TrimSpace(r.Header.Get("X-Project-ID"))
+		if reqProj != "" && !strings.EqualFold(reqProj, "all") && reqProj != proj {
+			return ErrTenantMismatch
+		}
+		r.Header.Set("X-Project-ID", proj)
+	}
+	return nil
 }
 
 // RequireUserOrService accepts a user JWT or a short-lived service JWT with the
@@ -88,6 +117,10 @@ func (c MiddlewareConfig) RequireUserOrService(requiredRole, requiredServiceScop
 		}
 		r.Header.Set("X-User-Username", claims.Username)
 		r.Header.Set("X-User-Role", claims.Role)
+		if err := ApplyUserTenantHeaders(r, claims); err != nil {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
 		next(w, r)
 	}
 }
