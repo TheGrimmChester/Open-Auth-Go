@@ -10,12 +10,31 @@ claims, err := openauth.ParseUserJWT(tok, secret)
 err = openauth.ValidateUserJWT(tok, secret)
 ```
 
-## Auth mode
+## Product Gate (recommended)
+
+`Bootstrap` / `BootstrapFromEnv` wires JWT secret loading, standalone vs co-deployed mode, HTTP middleware, and optional local `/api/auth/*` handlers:
+
+```go
+gate, err := openauth.BootstrapFromEnv("ora-api", "ora-api")
+if err != nil {
+    log.Fatal(err)
+}
+mux.HandleFunc("/api/items", gate.Middleware("viewer", handleItems))
+gate.RegisterLocalAuth(mux) // login/status/logout (+ register in standalone)
+```
 
 | Mode | When | Behavior |
 |------|------|----------|
 | **standalone** | `AUTH_MODE=standalone`, or `PEER_OPA_URL` empty | Product issues JWTs with its own `JWT_SECRET` (local login) |
 | **co-deployed** | `AUTH_MODE=codeployed`, or `PEER_OPA_URL` set | **OPA-Hub** issues user JWTs; product validates with shared `JWT_SECRET` |
+
+Helpers used by Gate (also callable directly):
+
+- `LoadJWTSecret` / `AuthRequiredEnv`
+- `BearerOrCookie` / `CookieName`
+- `HasPermission`
+- `MiddlewareConfig.RequireUser` / `RequireUserOrService`
+- `LocalAuthHandlers` / `LocalIssuer`
 
 ```go
 mode := openauth.ResolveMode(os.Getenv("AUTH_MODE"), os.Getenv("PEER_OPA_URL"))
