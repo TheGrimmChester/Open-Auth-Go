@@ -5,6 +5,16 @@ import (
 	"strings"
 )
 
+// HeaderTenantUserID names the personal-tenant owner for a request made by a
+// user who belongs to no organization.
+//
+// The value must stay identical to opentenant.HeaderTenantUserID. It is declared
+// here rather than imported for the same reason X-Organization-ID and
+// X-Project-ID are written as literals in this package: the auth library does not
+// depend on the tenant library, and adding that edge would force the two to be
+// version-bumped in lockstep across every product.
+const HeaderTenantUserID = "X-Tenant-User-ID"
+
 // MiddlewareConfig configures HTTP JWT middleware for product APIs.
 type MiddlewareConfig struct {
 	// Secret is the user JWT_SECRET.
@@ -65,12 +75,37 @@ func ApplyUserTenantHeaders(r *http.Request, claims *UserClaims) error {
 	if r == nil || claims == nil {
 		return nil
 	}
+	// Strip any inbound personal-owner header before deciding anything. This
+	// header names whose private rows the request may read, so a client that
+	// could set it would be choosing its own answer. Deleting first — rather
+	// than only overwriting in the personal branch — is what makes it
+	// unspoofable for organization members and admins too.
+	r.Header.Del(HeaderTenantUserID)
+
 	if org := strings.TrimSpace(claims.OrgID); org != "" {
 		reqOrg := strings.TrimSpace(r.Header.Get("X-Organization-ID"))
 		if reqOrg != "" && !strings.EqualFold(reqOrg, "all") && reqOrg != org {
 			return ErrTenantMismatch
 		}
 		r.Header.Set("X-Organization-ID", org)
+	} else if !HasPermission(claims.Role, "admin") {
+		// No organization claim, and not an admin: a private individual. Belonging
+		// to an organization is not a requirement in this product, so this is a
+		// permanent, first-class scope — not a user awaiting provisioning.
+		//
+		// Two things have to happen together. The request is pinned to a personal
+		// scope owned by this user, and the organization it asked for is dropped:
+		// without the second, an unattached user kept whatever X-Organization-ID
+		// it sent and was served that organization's data, because the block above
+		// only pins the header when a claim binds it.
+		username := strings.TrimSpace(claims.Username)
+		if username == "" {
+			// An unidentifiable non-admin with no organization cannot be given a
+			// personal scope, and must not fall through to an unbound one.
+			return ErrTenantMismatch
+		}
+		r.Header.Set(HeaderTenantUserID, username)
+		r.Header.Set("X-Organization-ID", "")
 	}
 	if proj := strings.TrimSpace(claims.ProjectID); proj != "" {
 		reqProj := strings.TrimSpace(r.Header.Get("X-Project-ID"))
@@ -100,6 +135,11 @@ func (c MiddlewareConfig) RequireUserOrService(requiredRole, requiredServiceScop
 						return
 					}
 				}
+				// This branch does not go through ApplyUserTenantHeaders, so it has
+				// to strip the personal-owner header itself. A peer service call is
+				// never personal-scoped, and leaving an inbound value here would
+				// let a caller name whose private rows to read.
+				r.Header.Del(HeaderTenantUserID)
 				r.Header.Set("X-User-Username", "service:"+sc.Issuer)
 				r.Header.Set("X-User-Role", "admin")
 				r.Header.Set("X-Service-Issuer", sc.Issuer)

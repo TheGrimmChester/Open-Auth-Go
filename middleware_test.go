@@ -189,3 +189,119 @@ func TestBootstrapStandalone(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// ---- Personal tenant scope -------------------------------------------------
+//
+// A user who belongs to no organization is a private individual, not a member
+// awaiting provisioning. These tests pin the isolation that makes that state
+// safe: the request is pinned to that person, and cannot be pointed at an
+// organization.
+
+func TestUnattachedNonAdminIsPinnedToItsOwnScope(t *testing.T) {
+	claims := &UserClaims{Username: "alice", Role: "editor"}
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	if err := ApplyUserTenantHeaders(r, claims); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.Header.Get(HeaderTenantUserID); got != "alice" {
+		t.Fatalf("personal owner = %q, want alice", got)
+	}
+}
+
+// The regression that motivated this: an unattached editor sent
+// X-Organization-ID: acme and was served acme's data, because the org header was
+// only pinned when a claim bound it.
+func TestUnattachedNonAdminCannotAssertAnOrganization(t *testing.T) {
+	claims := &UserClaims{Username: "alice", Role: "editor"}
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r.Header.Set("X-Organization-ID", "acme")
+	if err := ApplyUserTenantHeaders(r, claims); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.Header.Get("X-Organization-ID"); got != "" {
+		t.Fatalf("asserted organization survived: %q", got)
+	}
+	if got := r.Header.Get(HeaderTenantUserID); got != "alice" {
+		t.Fatalf("personal owner = %q", got)
+	}
+}
+
+// Two private individuals must not be able to reach each other's rows by naming
+// the other in the header.
+func TestPersonalOwnerHeaderCannotBeSpoofed(t *testing.T) {
+	claims := &UserClaims{Username: "nomad", Role: "editor"}
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r.Header.Set(HeaderTenantUserID, "alice")
+	if err := ApplyUserTenantHeaders(r, claims); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.Header.Get(HeaderTenantUserID); got != "nomad" {
+		t.Fatalf("spoofed owner survived: %q", got)
+	}
+}
+
+// An organization member is not personal-scoped, and an inbound header must not
+// make them appear to be.
+func TestOrganizationMemberGetsNoPersonalOwner(t *testing.T) {
+	claims := &UserClaims{Username: "bob", Role: "editor", OrgID: "acme"}
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r.Header.Set(HeaderTenantUserID, "alice")
+	if err := ApplyUserTenantHeaders(r, claims); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.Header.Get(HeaderTenantUserID); got != "" {
+		t.Fatalf("organization member carried a personal owner: %q", got)
+	}
+	if got := r.Header.Get("X-Organization-ID"); got != "acme" {
+		t.Fatalf("organization pin = %q", got)
+	}
+}
+
+// An unbound admin keeps its cross-organization reach — that is the documented
+// lab / operator role, and is not what this change restricts.
+func TestUnboundAdminKeepsCrossOrganizationReach(t *testing.T) {
+	claims := &UserClaims{Username: "root", Role: "admin"}
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r.Header.Set("X-Organization-ID", "acme")
+	if err := ApplyUserTenantHeaders(r, claims); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.Header.Get("X-Organization-ID"); got != "acme" {
+		t.Fatalf("admin lost its selected organization: %q", got)
+	}
+	if got := r.Header.Get(HeaderTenantUserID); got != "" {
+		t.Fatalf("admin must not be personal-scoped: %q", got)
+	}
+}
+
+// Fail closed rather than falling through to an unbound scope.
+func TestUnidentifiableNonAdminIsRejected(t *testing.T) {
+	claims := &UserClaims{Username: "  ", Role: "viewer"}
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	if err := ApplyUserTenantHeaders(r, claims); err != ErrTenantMismatch {
+		t.Fatalf("want ErrTenantMismatch, got %v", err)
+	}
+}
+
+// The service branch does not go through ApplyUserTenantHeaders, so it needs its
+// own strip — otherwise a peer call is a second way to spoof the owner.
+func TestServiceTokenStripsThePersonalOwnerHeader(t *testing.T) {
+	userSecret := []byte(strings.Repeat("u", 32))
+	svcSecret := []byte(strings.Repeat("s", 32))
+	tok, err := MintServiceJWT(svcSecret, "opm-api", "oam-api", "creds:resolve")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := MiddlewareConfig{Secret: userSecret, ServiceSecret: svcSecret, ServiceAudience: "oam-api"}
+	var seen string
+	h := cfg.RequireUserOrService("viewer", "creds:resolve", func(w http.ResponseWriter, r *http.Request) {
+		seen = r.Header.Get(HeaderTenantUserID)
+	})
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r.Header.Set("Authorization", "Bearer "+tok)
+	r.Header.Set(HeaderTenantUserID, "alice")
+	h(httptest.NewRecorder(), r)
+	if seen != "" {
+		t.Fatalf("service call carried a spoofed personal owner: %q", seen)
+	}
+}
