@@ -210,19 +210,46 @@ func TestUnattachedNonAdminIsPinnedToItsOwnScope(t *testing.T) {
 
 // The regression that motivated this: an unattached editor sent
 // X-Organization-ID: acme and was served acme's data, because the org header was
-// only pinned when a claim bound it.
+// only pinned when a claim bound it. Personal accounts now reject foreign org
+// headers with ErrTenantMismatch instead of silently clearing them.
 func TestUnattachedNonAdminCannotAssertAnOrganization(t *testing.T) {
 	claims := &UserClaims{Username: "alice", Role: "editor"}
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	r.Header.Set("X-Organization-ID", "acme")
+	if err := ApplyUserTenantHeaders(r, claims); err != ErrTenantMismatch {
+		t.Fatalf("want ErrTenantMismatch, got %v", err)
+	}
+}
+
+func TestPersonalAccountTypeRejectsOrganizationHeader(t *testing.T) {
+	claims := &UserClaims{Username: "root", Role: "admin", AccountType: AccountTypePersonal}
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r.Header.Set("X-Organization-ID", "acme")
+	if err := ApplyUserTenantHeaders(r, claims); err != ErrTenantMismatch {
+		t.Fatalf("personal admin must not select an org: %v", err)
+	}
+}
+
+func TestPersonalAccountTypeIsPinnedEvenForAdmin(t *testing.T) {
+	claims := &UserClaims{Username: "root", Role: "admin", AccountType: AccountTypePersonal}
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	if err := ApplyUserTenantHeaders(r, claims); err != nil {
 		t.Fatal(err)
 	}
-	if got := r.Header.Get("X-Organization-ID"); got != "" {
-		t.Fatalf("asserted organization survived: %q", got)
-	}
-	if got := r.Header.Get(HeaderTenantUserID); got != "alice" {
+	if got := r.Header.Get(HeaderTenantUserID); got != "root" {
 		t.Fatalf("personal owner = %q", got)
+	}
+	if got := r.Header.Get("X-Organization-ID"); got != "" {
+		t.Fatalf("org header = %q", got)
+	}
+}
+
+func TestOrganizationAccountTypeEnforcesJWTOrg(t *testing.T) {
+	claims := &UserClaims{Username: "bob", Role: "editor", AccountType: AccountTypeOrganization, OrgID: "acme"}
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r.Header.Set("X-Organization-ID", "other")
+	if err := ApplyUserTenantHeaders(r, claims); err != ErrTenantMismatch {
+		t.Fatalf("want mismatch, got %v", err)
 	}
 }
 

@@ -28,17 +28,26 @@ type ServiceClaims struct {
 	jwt.RegisteredClaims
 }
 
+// Immutable account types minted by OAM at user creation.
+const (
+	AccountTypePersonal     = "personal"
+	AccountTypeOrganization = "organization"
+)
+
 // UserClaims are user-facing JWT claims (validated against JWT_SECRET).
 // OrgID / ProjectID optionally bind the token to a tenant; empty means the
 // caller may still pass X-Organization-ID / X-Project-ID (lab / unbound admin).
+// AccountType is set by OAM ("personal" | "organization") and makes org binding
+// explicit rather than inferred from empty org_id alone.
 // ProjectIDs is an allowlist of projects within OrgID (or the request org when
 // OrgID is empty). Role admin ignores ProjectIDs and may access every project.
 type UserClaims struct {
-	Username   string   `json:"username"`
-	Role       string   `json:"role"`
-	OrgID      string   `json:"org_id,omitempty"`
-	ProjectID  string   `json:"project_id,omitempty"`
-	ProjectIDs []string `json:"project_ids,omitempty"`
+	Username    string   `json:"username"`
+	Role        string   `json:"role"`
+	AccountType string   `json:"account_type,omitempty"`
+	OrgID       string   `json:"org_id,omitempty"`
+	ProjectID   string   `json:"project_id,omitempty"`
+	ProjectIDs  []string `json:"project_ids,omitempty"`
 	jwt.RegisteredClaims
 }
 

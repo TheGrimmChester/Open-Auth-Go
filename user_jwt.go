@@ -37,21 +37,39 @@ func MintUserJWTWithTenant(secret []byte, username, role, issuer, orgID, project
 // allowlist (project_ids). Empty projectIDs means unbound (legacy lab tokens);
 // role admin always bypasses the allowlist at enforcement time.
 func MintUserJWTWithACL(secret []byte, username, role, issuer, orgID string, projectIDs []string, ttl time.Duration) (string, error) {
+	return MintUserJWTWithAccount(secret, username, role, issuer, "", orgID, projectIDs, ttl)
+}
+
+// MintUserJWTWithAccount issues a user JWT with an immutable account_type from OAM.
+func MintUserJWTWithAccount(secret []byte, username, role, issuer, accountType, orgID string, projectIDs []string, ttl time.Duration) (string, error) {
 	username = strings.TrimSpace(username)
 	role = strings.TrimSpace(role)
 	issuer = strings.TrimSpace(issuer)
 	orgID = strings.TrimSpace(orgID)
+	accountType = strings.ToLower(strings.TrimSpace(accountType))
 	if len(secret) == 0 || username == "" {
 		return "", ErrInvalidToken
 	}
 	if role == "" {
 		role = "viewer"
 	}
+	switch accountType {
+	case "", AccountTypePersonal, AccountTypeOrganization:
+	default:
+		return "", ErrInvalidToken
+	}
+	if accountType == AccountTypePersonal && orgID != "" {
+		return "", ErrInvalidToken
+	}
+	if accountType == AccountTypeOrganization && orgID == "" {
+		return "", ErrInvalidToken
+	}
 	return mintUserClaims(secret, UserClaims{
-		Username:   username,
-		Role:       role,
-		OrgID:      orgID,
-		ProjectIDs: NormalizeProjectIDs(projectIDs),
+		Username:    username,
+		Role:        role,
+		AccountType: accountType,
+		OrgID:       orgID,
+		ProjectIDs:  NormalizeProjectIDs(projectIDs),
 	}, issuer, ttl)
 }
 

@@ -66,6 +66,38 @@ func (c MiddlewareConfig) RequireUser(requiredRole string, next http.HandlerFunc
 	}
 }
 
+// IsPersonalAccount reports whether the token represents an immutable personal
+// account (OAM account_type=personal). Legacy tokens without account_type fall
+// back to empty org_id + non-admin, preserving pre-OAM behaviour.
+func IsPersonalAccount(claims *UserClaims) bool {
+	if claims == nil {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(claims.AccountType)) {
+	case AccountTypePersonal:
+		return true
+	case AccountTypeOrganization:
+		return false
+	default:
+		return strings.TrimSpace(claims.OrgID) == "" && !HasPermission(claims.Role, "admin")
+	}
+}
+
+// IsOrganizationAccount reports whether the token is bound to one organization.
+func IsOrganizationAccount(claims *UserClaims) bool {
+	if claims == nil {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(claims.AccountType)) {
+	case AccountTypeOrganization:
+		return true
+	case AccountTypePersonal:
+		return false
+	default:
+		return strings.TrimSpace(claims.OrgID) != ""
+	}
+}
+
 // ApplyUserTenantHeaders enforces JWT-bound org/project against request headers.
 // When claims bind a dimension, a mismatched client header is rejected; matching
 // or missing headers are overwritten from the claims so handlers never trust a
@@ -82,26 +114,29 @@ func ApplyUserTenantHeaders(r *http.Request, claims *UserClaims) error {
 	// unspoofable for organization members and admins too.
 	r.Header.Del(HeaderTenantUserID)
 
-	if org := strings.TrimSpace(claims.OrgID); org != "" {
+	if IsPersonalAccount(claims) {
+		username := strings.TrimSpace(claims.Username)
+		if username == "" {
+			return ErrTenantMismatch
+		}
+		// Personal accounts never operate in an organization context, even when
+		// the role is admin — account_type is immutable and authoritative.
+		reqOrg := strings.TrimSpace(r.Header.Get("X-Organization-ID"))
+		if reqOrg != "" && !strings.EqualFold(reqOrg, "all") {
+			return ErrTenantMismatch
+		}
+		r.Header.Set(HeaderTenantUserID, username)
+		r.Header.Set("X-Organization-ID", "")
+	} else if org := strings.TrimSpace(claims.OrgID); org != "" {
 		reqOrg := strings.TrimSpace(r.Header.Get("X-Organization-ID"))
 		if reqOrg != "" && !strings.EqualFold(reqOrg, "all") && reqOrg != org {
 			return ErrTenantMismatch
 		}
 		r.Header.Set("X-Organization-ID", org)
 	} else if !HasPermission(claims.Role, "admin") {
-		// No organization claim, and not an admin: a private individual. Belonging
-		// to an organization is not a requirement in this product, so this is a
-		// permanent, first-class scope — not a user awaiting provisioning.
-		//
-		// Two things have to happen together. The request is pinned to a personal
-		// scope owned by this user, and the organization it asked for is dropped:
-		// without the second, an unattached user kept whatever X-Organization-ID
-		// it sent and was served that organization's data, because the block above
-		// only pins the header when a claim binds it.
+		// Legacy: no organization claim and not admin — private individual.
 		username := strings.TrimSpace(claims.Username)
 		if username == "" {
-			// An unidentifiable non-admin with no organization cannot be given a
-			// personal scope, and must not fall through to an unbound one.
 			return ErrTenantMismatch
 		}
 		r.Header.Set(HeaderTenantUserID, username)
