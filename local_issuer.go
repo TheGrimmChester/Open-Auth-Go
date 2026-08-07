@@ -11,8 +11,9 @@ import (
 )
 
 // LocalIssuer is a minimal in-memory user store for standalone product auth.
-// It seeds one admin user for lab installs. Co-deployed installs should leave
-// issuance to OPA-Hub and only validate with a shared JWT_SECRET.
+// It seeds one admin user for lab installs. Co-deployed family installs leave
+// issuance to OAM (iss=oam-api; hub proxies when PEER_OAM_URL is set) and only
+// validate with a shared JWT_SECRET.
 //
 // Per-user project membership (OrgID + ProjectIDs) is stored alongside the
 // password hash and minted into JWT claims at login. Role admin ignores the

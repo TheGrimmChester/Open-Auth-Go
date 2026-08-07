@@ -1,6 +1,7 @@
 package openauth
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 )
@@ -59,18 +60,34 @@ func (c MiddlewareConfig) RequireUser(requiredRole string, next http.HandlerFunc
 			return
 		}
 		if err := EnforceProjectACL(r, claims); err != nil {
-			http.Error(w, "forbidden", http.StatusForbidden)
+			writeProjectACLError(w, err)
 			return
 		}
 		next(w, r)
 	}
 }
 
+// writeProjectACLError maps ACL failures to HTTP status (400 over-cap, else 403).
+func writeProjectACLError(w http.ResponseWriter, err error) {
+	if errors.Is(err, ErrTooManyProjectIDs) {
+		http.Error(w, "too many project ids", http.StatusBadRequest)
+		return
+	}
+	http.Error(w, "forbidden", http.StatusForbidden)
+}
+
 // IsPersonalAccount reports whether the token represents an immutable personal
 // account (OAM account_type=personal). Legacy tokens without account_type fall
 // back to empty org_id + non-admin, preserving pre-OAM behaviour.
+//
+// Role admin is never personal-scoped: the platform operator (including the
+// bootstrap seed, which is account_type=personal with an empty org) must keep
+// cross-organization reach. Private individuals remain isolated.
 func IsPersonalAccount(claims *UserClaims) bool {
 	if claims == nil {
+		return false
+	}
+	if HasPermission(claims.Role, "admin") {
 		return false
 	}
 	switch strings.ToLower(strings.TrimSpace(claims.AccountType)) {
@@ -79,7 +96,7 @@ func IsPersonalAccount(claims *UserClaims) bool {
 	case AccountTypeOrganization:
 		return false
 	default:
-		return strings.TrimSpace(claims.OrgID) == "" && !HasPermission(claims.Role, "admin")
+		return strings.TrimSpace(claims.OrgID) == ""
 	}
 }
 
@@ -119,8 +136,7 @@ func ApplyUserTenantHeaders(r *http.Request, claims *UserClaims) error {
 		if username == "" {
 			return ErrTenantMismatch
 		}
-		// Personal accounts never operate in an organization context, even when
-		// the role is admin — account_type is immutable and authoritative.
+		// Personal (non-admin) accounts never operate in an organization context.
 		reqOrg := strings.TrimSpace(r.Header.Get("X-Organization-ID"))
 		if reqOrg != "" && !strings.EqualFold(reqOrg, "all") {
 			return ErrTenantMismatch
@@ -202,7 +218,7 @@ func (c MiddlewareConfig) RequireUserOrService(requiredRole, requiredServiceScop
 			return
 		}
 		if err := EnforceProjectACL(r, claims); err != nil {
-			http.Error(w, "forbidden", http.StatusForbidden)
+			writeProjectACLError(w, err)
 			return
 		}
 		next(w, r)

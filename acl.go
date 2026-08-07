@@ -6,16 +6,29 @@ import (
 	"strings"
 )
 
-// Lab / WriteTenant defaults (aligned with Open-Tenant-Go). Used when a
-// restricted caller omits tenant headers so ACL checks match SQL scope.
+// Legacy tenant id constants. DefaultOrganizationID may match stored rows when
+// that id is explicitly selected; EnforceProjectACL never invents it for a
+// missing / "all" org header (use JWT org_id or deny). DefaultProjectID is
+// still used when a restricted caller omits the project header and has no
+// singular / single-allowlist pin.
 const (
 	DefaultOrganizationID = "default-org"
 	DefaultProjectID      = "default-project"
+
+	// HeaderProjectIDs is the list-only multi-project header (aligned with
+	// opentenant.HeaderProjectIDs). Comma-separated; cap MaxProjectIDs.
+	HeaderProjectIDs = "X-Project-IDs"
+
+	// MaxProjectIDs caps X-Project-IDs / project_ids (aligned with Open-Tenant-Go).
+	MaxProjectIDs = 32
 )
 
 // ErrProjectDenied is returned when the caller is not allowed to access the
 // requested project within their organization.
 var ErrProjectDenied = errors.New("project access denied")
+
+// ErrTooManyProjectIDs is returned when X-Project-IDs / project_ids exceeds MaxProjectIDs.
+var ErrTooManyProjectIDs = errors.New("too many project ids")
 
 // HasProjectRestriction reports whether claims carry a project allowlist or a
 // singular project bind. Admins are never treated as restricted.
@@ -94,24 +107,86 @@ func CanAccessProject(claims *UserClaims, orgID, projectID string) bool {
 	return false
 }
 
+// RequestProjectIDs reads list-only X-Project-IDs, then project_ids query when
+// the header is empty. Returns ErrTooManyProjectIDs when the raw non-empty
+// token count exceeds MaxProjectIDs (before dedupe).
+func RequestProjectIDs(r *http.Request) ([]string, error) {
+	if r == nil {
+		return nil, nil
+	}
+	raw := strings.TrimSpace(r.Header.Get(HeaderProjectIDs))
+	if raw == "" {
+		raw = strings.TrimSpace(r.URL.Query().Get("project_ids"))
+	}
+	if raw == "" {
+		return nil, nil
+	}
+	parts := strings.Split(raw, ",")
+	tokens := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		tokens = append(tokens, p)
+	}
+	if len(tokens) > MaxProjectIDs {
+		return nil, ErrTooManyProjectIDs
+	}
+	return NormalizeProjectIDs(tokens), nil
+}
+
 // EnforceProjectACL checks the request's tenant headers against claims.
-// Missing / "all" headers collapse to DefaultOrganizationID / DefaultProjectID
-// for restricted callers so they cannot widen scope by omission. When the
-// allowlist has exactly one project and the project header is empty/"all",
-// the header is pinned to that project (same convenience as a singular bind).
+// Missing / "all" org headers resolve to the JWT org_id; if that is also empty
+// the request is denied (never invent DefaultOrganizationID). Missing / "all"
+// project headers collapse to DefaultProjectID when there is no singular bind
+// or single-allowlist pin, so restricted callers cannot widen project scope by
+// omission. When the allowlist has exactly one project and the project header
+// is empty/"all", the header is pinned to that project.
+//
+// List-only X-Project-IDs: every id is ACL-checked; over MaxProjectIDs is
+// rejected for all callers (including admin). When the multi header is set,
+// omitted single X-Project-ID is not collapsed to default-project (list scope
+// uses the multi set). A concrete single X-Project-ID is still checked when present.
 func EnforceProjectACL(r *http.Request, claims *UserClaims) error {
 	if r == nil || claims == nil {
 		return nil
 	}
+
+	multi, err := RequestProjectIDs(r)
+	if err != nil {
+		return err
+	}
+
 	if !HasProjectRestriction(claims) {
 		return nil
 	}
 
 	org := strings.TrimSpace(r.Header.Get("X-Organization-ID"))
-	proj := strings.TrimSpace(r.Header.Get("X-Project-ID"))
 	if org == "" || strings.EqualFold(org, "all") {
-		org = DefaultOrganizationID
+		org = strings.TrimSpace(claims.OrgID)
+		if org == "" {
+			return ErrProjectDenied
+		}
 	}
+
+	if len(multi) > 0 {
+		for _, id := range multi {
+			if !CanAccessProject(claims, org, id) {
+				return ErrProjectDenied
+			}
+		}
+		proj := strings.TrimSpace(r.Header.Get("X-Project-ID"))
+		if proj != "" && !strings.EqualFold(proj, "all") {
+			if !CanAccessProject(claims, org, proj) {
+				return ErrProjectDenied
+			}
+		}
+		r.Header.Set("X-Organization-ID", org)
+		return nil
+	}
+
+	proj := strings.TrimSpace(r.Header.Get("X-Project-ID"))
 	if proj == "" || strings.EqualFold(proj, "all") {
 		if allowed := NormalizeProjectIDs(claims.ProjectIDs); len(allowed) == 1 && strings.TrimSpace(claims.ProjectID) == "" {
 			proj = allowed[0]

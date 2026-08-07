@@ -168,6 +168,9 @@ func TestLocalAuthHandlersCodeployedLogin(t *testing.T) {
 	if rr.Code != http.StatusServiceUnavailable {
 		t.Fatalf("want 503, got %d", rr.Code)
 	}
+	if !strings.Contains(rr.Body.String(), "oam-api") && !strings.Contains(rr.Body.String(), "OAM") {
+		t.Fatalf("503 body should point to OAM, got %s", rr.Body.String())
+	}
 }
 
 func TestBootstrapStandalone(t *testing.T) {
@@ -222,25 +225,40 @@ func TestUnattachedNonAdminCannotAssertAnOrganization(t *testing.T) {
 }
 
 func TestPersonalAccountTypeRejectsOrganizationHeader(t *testing.T) {
-	claims := &UserClaims{Username: "root", Role: "admin", AccountType: AccountTypePersonal}
+	claims := &UserClaims{Username: "alice", Role: "editor", AccountType: AccountTypePersonal}
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	r.Header.Set("X-Organization-ID", "acme")
 	if err := ApplyUserTenantHeaders(r, claims); err != ErrTenantMismatch {
-		t.Fatalf("personal admin must not select an org: %v", err)
+		t.Fatalf("personal non-admin must not select an org: %v", err)
 	}
 }
 
-func TestPersonalAccountTypeIsPinnedEvenForAdmin(t *testing.T) {
+// Bootstrap seeds the platform operator as account_type=personal with an empty
+// org. That must not shrink role=admin into a private individual — admins keep
+// cross-organization reach (and may select any org header).
+func TestPersonalAccountTypeAdminKeepsCrossOrganizationReach(t *testing.T) {
+	claims := &UserClaims{Username: "root", Role: "admin", AccountType: AccountTypePersonal}
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r.Header.Set("X-Organization-ID", "acme")
+	if err := ApplyUserTenantHeaders(r, claims); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.Header.Get("X-Organization-ID"); got != "acme" {
+		t.Fatalf("admin lost its selected organization: %q", got)
+	}
+	if got := r.Header.Get(HeaderTenantUserID); got != "" {
+		t.Fatalf("admin must not be personal-scoped: %q", got)
+	}
+}
+
+func TestPersonalAccountTypeAdminIsNotPinned(t *testing.T) {
 	claims := &UserClaims{Username: "root", Role: "admin", AccountType: AccountTypePersonal}
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	if err := ApplyUserTenantHeaders(r, claims); err != nil {
 		t.Fatal(err)
 	}
-	if got := r.Header.Get(HeaderTenantUserID); got != "root" {
-		t.Fatalf("personal owner = %q", got)
-	}
-	if got := r.Header.Get("X-Organization-ID"); got != "" {
-		t.Fatalf("org header = %q", got)
+	if got := r.Header.Get(HeaderTenantUserID); got != "" {
+		t.Fatalf("admin must not be personal-scoped: %q", got)
 	}
 }
 

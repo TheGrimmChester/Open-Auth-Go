@@ -42,11 +42,19 @@ func MintUserJWTWithACL(secret []byte, username, role, issuer, orgID string, pro
 
 // MintUserJWTWithAccount issues a user JWT with an immutable account_type from OAM.
 func MintUserJWTWithAccount(secret []byte, username, role, issuer, accountType, orgID string, projectIDs []string, ttl time.Duration) (string, error) {
+	return MintUserJWTWithImpersonator(secret, username, role, issuer, accountType, orgID, projectIDs, "", ttl)
+}
+
+// MintUserJWTWithImpersonator issues a user JWT as the target account, optionally
+// recording impersonator (admin username). Tenancy follows account_type / org_id
+// / project_ids of the target; impersonator is opaque to product middleware.
+func MintUserJWTWithImpersonator(secret []byte, username, role, issuer, accountType, orgID string, projectIDs []string, impersonator string, ttl time.Duration) (string, error) {
 	username = strings.TrimSpace(username)
 	role = strings.TrimSpace(role)
 	issuer = strings.TrimSpace(issuer)
 	orgID = strings.TrimSpace(orgID)
 	accountType = strings.ToLower(strings.TrimSpace(accountType))
+	impersonator = strings.TrimSpace(impersonator)
 	if len(secret) == 0 || username == "" {
 		return "", ErrInvalidToken
 	}
@@ -65,11 +73,12 @@ func MintUserJWTWithAccount(secret []byte, username, role, issuer, accountType, 
 		return "", ErrInvalidToken
 	}
 	return mintUserClaims(secret, UserClaims{
-		Username:    username,
-		Role:        role,
-		AccountType: accountType,
-		OrgID:       orgID,
-		ProjectIDs:  NormalizeProjectIDs(projectIDs),
+		Username:     username,
+		Role:         role,
+		AccountType:  accountType,
+		OrgID:        orgID,
+		ProjectIDs:   NormalizeProjectIDs(projectIDs),
+		Impersonator: impersonator,
 	}, issuer, ttl)
 }
 
@@ -81,6 +90,7 @@ func mintUserClaims(secret []byte, claims UserClaims, issuer string, ttl time.Du
 		claims.Role = "viewer"
 	}
 	claims.ProjectIDs = NormalizeProjectIDs(claims.ProjectIDs)
+	claims.Impersonator = strings.TrimSpace(claims.Impersonator)
 	if ttl <= 0 {
 		ttl = defaultUserTTL
 	}

@@ -28,6 +28,32 @@ func TestMintAndValidateServiceJWT(t *testing.T) {
 	}
 }
 
+func TestMintServiceJWTWithTenantUserID(t *testing.T) {
+	secret := []byte("test-service-secret-at-least-32-bytes!!")
+	tok, err := MintServiceJWTWithTenant(secret, "opm-api", "ora-api", "scm:pm", "", "alice", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claims, err := ValidateServiceJWT(tok, secret, "ora-api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claims.OrgID != "" || claims.UserID != "alice" {
+		t.Fatalf("want empty org + user_id=alice, got org=%q user=%q", claims.OrgID, claims.UserID)
+	}
+	tokOrg, err := MintServiceJWTWithTenant(secret, "opm-api", "ora-api", "scm:pm", "org-a", "", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotOrg, err := ValidateServiceJWT(tokOrg, secret, "ora-api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotOrg.OrgID != "org-a" || gotOrg.UserID != "" {
+		t.Fatalf("want org-a + empty user, got org=%q user=%q", gotOrg.OrgID, gotOrg.UserID)
+	}
+}
+
 func TestValidateServiceJWTRejectsWrongAud(t *testing.T) {
 	secret := []byte("test-service-secret-at-least-32-bytes!!")
 	tok, err := MintServiceJWT(secret, "ora-api", "osa-api", "health:read")
@@ -36,6 +62,55 @@ func TestValidateServiceJWTRejectsWrongAud(t *testing.T) {
 	}
 	if _, err := ValidateServiceJWT(tok, secret, "opl-api"); err == nil {
 		t.Fatal("expected aud mismatch")
+	}
+}
+
+func TestValidateServiceJWTAcceptsJobSubject(t *testing.T) {
+	secret := []byte("test-service-secret-at-least-32-bytes!!")
+	now := time.Now().UTC()
+	claims := ServiceClaims{
+		Scope: "scm:clone",
+		RegisteredClaims: jwt.RegisteredClaims{
+			ID:        "jti-job-1",
+			Issuer:    "opm-api",
+			Audience:  jwt.ClaimStrings{"ora-api"},
+			Subject:   "job",
+			IssuedAt:  jwt.NewNumericDate(now),
+			ExpiresAt: jwt.NewNumericDate(now.Add(15 * time.Minute)),
+		},
+	}
+	tok, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(secret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := ValidateServiceJWT(tok, secret, "ora-api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Subject != "job" || got.ID != "jti-job-1" {
+		t.Fatalf("claims=%+v", got)
+	}
+}
+
+func TestValidateServiceJWTRejectsUnknownSubject(t *testing.T) {
+	secret := []byte("test-service-secret-at-least-32-bytes!!")
+	now := time.Now().UTC()
+	claims := ServiceClaims{
+		Scope: "scm:clone",
+		RegisteredClaims: jwt.RegisteredClaims{
+			Issuer:    "opm-api",
+			Audience:  jwt.ClaimStrings{"ora-api"},
+			Subject:   "user",
+			IssuedAt:  jwt.NewNumericDate(now),
+			ExpiresAt: jwt.NewNumericDate(now.Add(time.Minute)),
+		},
+	}
+	tok, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(secret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ValidateServiceJWT(tok, secret, "ora-api"); err == nil {
+		t.Fatal("expected reject for subject=user")
 	}
 }
 

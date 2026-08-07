@@ -8,8 +8,9 @@ type Mode string
 const (
 	// ModeStandalone: the product issues and validates JWTs with its own JWT_SECRET.
 	ModeStandalone Mode = "standalone"
-	// ModeCodeployed: OPA-Hub (or a shared issuer) issues JWTs; the product validates
-	// with a shared JWT_SECRET. Local /api/auth/login is not the identity home.
+	// ModeCodeployed: OAM (iss=oam-api) issues user JWTs when PEER_OAM_URL is set;
+	// products validate with a shared JWT_SECRET. Local /api/auth/login is not the
+	// identity home (hub may proxy login to OAM).
 	ModeCodeployed Mode = "codeployed"
 )
 
@@ -20,8 +21,9 @@ const (
 //  2. AUTH_MODE=codeployed (or hub / shared) → codeployed
 //  3. Empty AUTH_MODE: standalone when peerHubURL is empty; otherwise codeployed
 //
-// peerHubURL is typically PEER_OPA_URL (hub base URL). OPA-Hub itself always
-// issues tokens; pass "" and AUTH_MODE is ignored toward issuer behavior on hub.
+// peerHubURL is typically PEER_OPA_URL (hub base URL). User JWT issuance in
+// family stacks belongs to OAM when PEER_OAM_URL is set; the hub validates and
+// may proxy login. Pass "" for products that always use explicit AUTH_MODE.
 func ResolveMode(authModeEnv, peerHubURL string) Mode {
 	switch strings.ToLower(strings.TrimSpace(authModeEnv)) {
 	case "standalone", "local", "solo":

@@ -26,7 +26,7 @@ gate.RegisterLocalAuth(mux) // login/status/logout (+ register in standalone)
 | Mode | When | Behavior |
 |------|------|----------|
 | **standalone** | `AUTH_MODE=standalone`, or `PEER_OPA_URL` empty | Product issues JWTs with its own `JWT_SECRET` (local login) |
-| **co-deployed** | `AUTH_MODE=codeployed`, or `PEER_OPA_URL` set | **OPA-Hub** issues user JWTs; product validates with shared `JWT_SECRET` |
+| **co-deployed** | `AUTH_MODE=codeployed`, or `PEER_OPA_URL` set | **OAM** issues user JWTs (`iss=oam-api`) when `PEER_OAM_URL` is set; hub proxies login; product validates with shared `JWT_SECRET`. Local product `/api/auth/login` returns **503** |
 
 Helpers used by Gate (also callable directly):
 
@@ -51,8 +51,10 @@ Within an org, non-admin users may be limited to a project allowlist minted as `
 ```go
 tok, err := openauth.MintUserJWTWithACL(secret, "dev", "viewer", "opa-hub", "acme", []string{"alpha", "beta"}, 0)
 ok := openauth.CanAccessProject(claims, "acme", "alpha") // true
-err = openauth.EnforceProjectACL(r, claims)               // 403-equivalent when header project not allowlisted
+err = openauth.EnforceProjectACL(r, claims)               // 403 when header project not allowlisted
 ```
+
+List-only multi-select uses `X-Project-IDs: id1,id2,…` (cap 32; query `project_ids`). `EnforceProjectACL` checks every id; over-cap → `ErrTooManyProjectIDs` (HTTP 400). Writes still use a single `X-Project-ID`.
 
 `LocalIssuer.RegisterWithMembership` / `SetMembership` store the allowlist; login mints it into the JWT. Role **admin** always bypasses (lab seed `admin`/`admin` keeps full default-org access). Products should call `EnforceProjectACL` after `ApplyUserTenantHeaders` on auth-enforced routes (hub does this on tenancy + query middleware).
 
@@ -64,4 +66,4 @@ claims, err := openauth.ValidateServiceJWT(tok, secret, "osa-api")
 err = openauth.RequireScope(claims, "findings:read")
 ```
 
-Service JWTs use HS256 with `iss` / `aud` / `sub=service` / `scope` / short `exp`. Prefer `OPEN_SERVICE_JWT_SECRET` distinct from user `JWT_SECRET`.
+Service JWTs use HS256 with `iss` / `aud` / `sub=service` / `scope` / short `exp`. Optional `org_id` and `user_id` claims authorize tenant-scoped peer resources (`MintServiceJWTWithTenant`). Prefer `OPEN_SERVICE_JWT_SECRET` distinct from user `JWT_SECRET`.

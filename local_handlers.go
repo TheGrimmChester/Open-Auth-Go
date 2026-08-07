@@ -42,7 +42,7 @@ func (h *LocalAuthHandlers) ServeLogin(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"error":   "auth_mode",
-			"message": "login is issued by OPA-Hub in co-deployed mode; set AUTH_MODE=standalone for local auth",
+			"message": "login is issued by OAM (iss=oam-api) in co-deployed family mode; use OAM or the hub/oam-auth login bridge, or set AUTH_MODE=standalone for local auth",
 			"mode":    string(h.Mode),
 		})
 		return

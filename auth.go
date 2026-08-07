@@ -23,8 +23,9 @@ const defaultServiceTTL = 5 * time.Minute
 
 // ServiceClaims are peer service-to-service JWT claims.
 type ServiceClaims struct {
-	Scope string `json:"scope"`
-	OrgID string `json:"org_id,omitempty"`
+	Scope  string `json:"scope"`
+	OrgID  string `json:"org_id,omitempty"`
+	UserID string `json:"user_id,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -41,13 +42,16 @@ const (
 // explicit rather than inferred from empty org_id alone.
 // ProjectIDs is an allowlist of projects within OrgID (or the request org when
 // OrgID is empty). Role admin ignores ProjectIDs and may access every project.
+// Impersonator is set by OAM when an admin mints a short-lived token as a
+// target user; peers treat it as opaque (tenancy follows the target claims).
 type UserClaims struct {
-	Username    string   `json:"username"`
-	Role        string   `json:"role"`
-	AccountType string   `json:"account_type,omitempty"`
-	OrgID       string   `json:"org_id,omitempty"`
-	ProjectID   string   `json:"project_id,omitempty"`
-	ProjectIDs  []string `json:"project_ids,omitempty"`
+	Username     string   `json:"username"`
+	Role         string   `json:"role"`
+	AccountType  string   `json:"account_type,omitempty"`
+	OrgID        string   `json:"org_id,omitempty"`
+	ProjectID    string   `json:"project_id,omitempty"`
+	ProjectIDs   []string `json:"project_ids,omitempty"`
+	Impersonator string   `json:"impersonator,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -81,11 +85,17 @@ func ParseUserJWT(token string, secret []byte) (*UserClaims, error) {
 // MintServiceJWT mints a short-lived service JWT for peer calls.
 // Claims: iss (caller), aud (callee), sub=service, scope, short exp.
 func MintServiceJWT(secret []byte, iss, aud, scope string) (string, error) {
-	return MintServiceJWTWithOrg(secret, iss, aud, scope, "", defaultServiceTTL)
+	return MintServiceJWTWithTenant(secret, iss, aud, scope, "", "", defaultServiceTTL)
 }
 
 // MintServiceJWTWithOrg mints a service JWT with optional org_id and TTL.
 func MintServiceJWTWithOrg(secret []byte, iss, aud, scope, orgID string, ttl time.Duration) (string, error) {
+	return MintServiceJWTWithTenant(secret, iss, aud, scope, orgID, "", ttl)
+}
+
+// MintServiceJWTWithTenant mints a service JWT with optional org_id, user_id, and TTL.
+// user_id authorizes personal (empty-org, user-scoped) peer resources without inventing an org.
+func MintServiceJWTWithTenant(secret []byte, iss, aud, scope, orgID, userID string, ttl time.Duration) (string, error) {
 	if len(secret) == 0 || iss == "" || aud == "" {
 		return "", ErrInvalidToken
 	}
@@ -94,8 +104,9 @@ func MintServiceJWTWithOrg(secret []byte, iss, aud, scope, orgID string, ttl tim
 	}
 	now := time.Now().UTC()
 	claims := ServiceClaims{
-		Scope: strings.TrimSpace(scope),
-		OrgID: strings.TrimSpace(orgID),
+		Scope:  strings.TrimSpace(scope),
+		OrgID:  strings.TrimSpace(orgID),
+		UserID: strings.TrimSpace(userID),
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer:    iss,
 			Audience:  jwt.ClaimStrings{aud},
@@ -125,7 +136,13 @@ func ValidateServiceJWT(token string, secret []byte, expectedAud string) (*Servi
 		return nil, ErrInvalidToken
 	}
 	claims, ok := parsed.Claims.(*ServiceClaims)
-	if !ok || claims.Subject != "service" || claims.Issuer == "" {
+	if !ok || claims.Issuer == "" {
+		return nil, ErrInvalidToken
+	}
+	// "service" = long-lived peer identity; "job" = short-lived job token (revocable via jti allowlist).
+	switch claims.Subject {
+	case "service", "job":
+	default:
 		return nil, ErrInvalidToken
 	}
 	return claims, nil
